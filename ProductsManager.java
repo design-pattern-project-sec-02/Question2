@@ -9,18 +9,22 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.GridPane;
-import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import org.apache.derby.jdbc.EmbeddedDriver;
 
 import java.sql.*;
-import java.util.ArrayList;
+import java.util.*;
 
 public class ProductsManager extends Application {
 
     private ProductsDataController dbManager;
-    private ObservableList<Product> products;
-    private TableView<Product> userView;
+    private ObservableList<Product> userProducts, executiveProducts;
+    private TableView<Product> userView, executiveView;
+
+    private final String sold="sold", added = "added", sorted = "sorted";
+
+    private EventManager eventManager;
 
     @Override
     public void start(Stage myStage) {
@@ -76,16 +80,11 @@ public class ProductsManager extends Application {
 
             Product product = new Product();
             product.setName(productName);
-            product.setShippingCount(count);
-            
-            boolean success = dbManager.addProduct(product);
+            product.setOriginalCount(count);
 
-            if(success) {
-                products.add(product);
-                addStatus.setText("Successfully added!");
-            } else {
-                addStatus.setText("Not added!");
-            }
+            EventObject event = new EventObject(product);
+            event.setStatusLabel(addStatus);
+            eventManager.notify(added, event);
 
         });
 
@@ -128,28 +127,26 @@ public class ProductsManager extends Application {
         btnBuy.setOnAction(e -> {
 
             String productName = txtSoldProductName.getText();
-            int count = Integer.parseInt(txtSellCount.getText());
+            int newSoldCount = Integer.parseInt(txtSellCount.getText());
 
-            Product targetProduct = null;
-            for(Product product: products) {
-                if(product.getName().equalsIgnoreCase(productName.trim())) {
-                    targetProduct = product;
+            Product product = null;
+            for(Product prod: userProducts) {
+                if(prod.getName().equals(productName)) {
+                    product = prod;
                     break;
                 }
             }
-            assert targetProduct != null;
-            int salesCount = targetProduct.getSalesCount() + count;
-            targetProduct.setSalesCount(salesCount);
-
-            userView.refresh();
-
-            boolean success = dbManager.updateProduct(targetProduct);
-
-            if(success) {
-                sellStatus.setText("Successfully Bought!");
-            } else {
-                sellStatus.setText("Not bought!");
+            assert product != null;
+            int soldSoFar = product.getSoldCount() + newSoldCount;
+            if(soldSoFar > product.getOriginalCount()) {
+                return;
             }
+
+            product.setSoldCount(soldSoFar);
+
+            EventObject event = new EventObject(product);
+            event.setStatusLabel(sellStatus);
+            eventManager.notify(sold, event);
 
         });
 
@@ -163,67 +160,100 @@ public class ProductsManager extends Application {
 
         userView = new TableView<>();
 
+
         TableColumn<Product, String> productNameCol = new TableColumn<>("Name");
-        TableColumn<Product, Integer> productCountCol = new TableColumn<>("Count");
+        TableColumn<Product, Integer> productCountCol = new TableColumn<>("In Store");
 
         // Defines how to fill data for each cell.
         // Get value from property of UserAccount. .
 
         productNameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
-        productCountCol.setCellValueFactory(new PropertyValueFactory<>("salesCount"));
+        productNameCol.setStyle("-fx-alignment: CENTER;");
+        productCountCol.setCellValueFactory(new PropertyValueFactory<>("inStoreCount"));
+        productCountCol.setStyle("-fx-alignment: CENTER;");
 
         // Set Sort type for userName column
         productNameCol.setSortType(TableColumn.SortType.DESCENDING);
 
         // Display row data
-        products = FXCollections.observableArrayList(dbManager.getProducts());
-        userView.setItems(products);
+        userProducts = FXCollections.observableArrayList(dbManager.getProducts());
+        userView.setItems(userProducts);
 
         //noinspection unchecked
         userView.getColumns().addAll(productNameCol, productCountCol);
         userView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
-        StackPane tableRootUser = new StackPane();
-        tableRootUser.getChildren().add(userView);
+        VBox userViewBox = new VBox();
+        userViewBox.setAlignment(Pos.CENTER);
+        userViewBox.getChildren().add(new Label("User View"));
+        userViewBox.getChildren().add(userView);
 
-        rootNode.add(tableRootUser, 1, 0);
-        GridPane.setRowSpan(tableRootUser, 2);
-        GridPane.setValignment(tableRootUser, VPos.CENTER);
+        rootNode.add(userViewBox, 1, 0);
+
+        Button btnSort = new Button("Sort Products");
+        rootNode.add(btnSort, 1, 2);
+        GridPane.setValignment(btnSort, VPos.BOTTOM);
+        GridPane.setHalignment(btnSort, HPos.LEFT);
+
+        // add handler
+        btnSort.setOnAction(e -> {
+
+            EventObject event = new EventObject(null);
+            eventManager.notify(sorted, event);
+
+        });
+
+        GridPane.setRowSpan(userViewBox, 2);
+        GridPane.setValignment(userViewBox, VPos.CENTER);
+        GridPane.setHalignment(userViewBox, HPos.CENTER);
 
         // ===========================
         // executive view table
         // ===========================
 
-        TableView<Product> executiveView = new TableView<>();
+        executiveView = new TableView<>();
 
         TableColumn<Product, String> productNameColExec = new TableColumn<>("Name");
-        TableColumn<Product, Integer> productShippingCol = new TableColumn<>("Shipping");
+        TableColumn<Product, Integer> productInStoreCol = new TableColumn<>("In Store");
+        TableColumn<Product, Integer> productSoldCol = new TableColumn<>("Sold");
+
 
         // Defines how to fill data for each cell.
         // Get value from property of UserAccount. .
 
         productNameColExec.setCellValueFactory(new PropertyValueFactory<>("name"));
-        productShippingCol.setCellValueFactory(new PropertyValueFactory<>("shippingCount"));
+        productNameColExec.setStyle("-fx-alignment: CENTER;");
+        productInStoreCol.setCellValueFactory(new PropertyValueFactory<>("inStoreCount"));
+        productInStoreCol.setStyle("-fx-alignment: CENTER;");
+        productSoldCol.setCellValueFactory(new PropertyValueFactory<>("soldCount"));
+        productSoldCol.setStyle("-fx-alignment: CENTER;");
 
-        // Set Sort type for userName column
-        productNameColExec.setSortType(TableColumn.SortType.DESCENDING);
+        for(TableColumn tc: executiveView.getColumns()) {
+            tc.setSortable(false);
+        }
 
         // Display row data
-        executiveView.setItems(products);
+        executiveProducts = FXCollections.observableArrayList(dbManager.getProducts());
+        executiveView.setItems(executiveProducts);
 
         //noinspection unchecked
-        executiveView.getColumns().addAll(productNameColExec, productShippingCol);
+        executiveView.getColumns().addAll(productNameColExec, productInStoreCol, productSoldCol);
 
-        StackPane tableRootExec = new StackPane();
-        tableRootExec.getChildren().add(executiveView);
+        VBox execViewBox= new VBox();
+        Label execViewLabel = new Label("Executive View");
+        execViewBox.getChildren().add(execViewLabel);
+        execViewBox.setAlignment(Pos.CENTER);
+        execViewBox.getChildren().add(executiveView);
 
         executiveView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
-        rootNode.add(tableRootExec, 2, 0);
-        GridPane.setRowSpan(tableRootExec, 2);
-        GridPane.setValignment(tableRootExec, VPos.CENTER);
+        rootNode.add(execViewBox, 2, 0);
+        GridPane.setRowSpan(execViewBox, 2);
+        GridPane.setValignment(execViewBox, VPos.CENTER);
 
         myStage.setScene(myScene);
+
+        attachListeners();
 
         myStage.show();
 
@@ -232,6 +262,22 @@ public class ProductsManager extends Application {
     @Override
     public void stop(){
         dbManager.closeDatabase();
+    }
+
+    private void attachListeners() {
+
+        eventManager = new EventManager(added, sold, sorted);
+
+        eventManager.subscribe(added, new ProductAddedDatabaseListener(dbManager));
+        eventManager.subscribe(added, new ProductAddedUserViewListener(userView, userProducts));
+        eventManager.subscribe(added, new ProductAddedExecutiveViewListener(executiveView, executiveProducts));
+
+        eventManager.subscribe(sold, new ProductSoldDatabaseListener(dbManager));
+        eventManager.subscribe(sold, new ProductSoldUserViewListener(userView, userProducts));
+        eventManager.subscribe(sold, new ProductSoldExecutiveViewListener(executiveView, executiveProducts));
+
+        eventManager.subscribe(sorted, new ProductsSortedListener(userView, userProducts));
+
     }
 
     public static void main(String[] args) {
@@ -254,7 +300,7 @@ public class ProductsManager extends Application {
             String createSQL = "create table product ("
                     + "id integer not null generated always as"
                     + " identity (start with 1, increment by 1), "
-                    + "name varchar(30) not null, shipping int, sales int, "
+                    + "name varchar(30) not null, original int, sold int, "
                     + "constraint primary_key primary key (id))";
 
             try {
@@ -278,9 +324,9 @@ public class ProductsManager extends Application {
 
                 // prepare statement;
                 insertStatement = conn.prepareStatement(
-                        "insert into product (name, shipping, sales) values(?,?,?)");
+                        "insert into product (name, original, sold) values(?,?,?)");
                 updateStatement = conn.prepareStatement(
-                        "update product set sales = ? where name = ?");
+                        "update product set sold = ? where name = ?");
 
             } catch (SQLException ex) {
                 System.out.println("in connection" + ex);
@@ -295,8 +341,8 @@ public class ProductsManager extends Application {
                 while (rs.next()) {
                     Product product = new Product();
                     product.setName(rs.getString("name"));
-                    product.setShippingCount(rs.getInt("shipping"));
-                    product.setSalesCount(rs.getInt("sales"));
+                    product.setOriginalCount(rs.getInt("original"));
+                    product.setSoldCount(rs.getInt("sold"));
                     products.add(product);
                 }
                 System.out.println("Products length: "+products.size());
@@ -311,8 +357,8 @@ public class ProductsManager extends Application {
         boolean addProduct(Product product) {
             try {
                 insertStatement.setString(1, product.getName());
-                insertStatement.setInt(2, product.getShippingCount());
-                insertStatement.setInt(3, product.getSalesCount());
+                insertStatement.setInt(2, product.getOriginalCount());
+                insertStatement.setInt(3, product.getSoldCount());
                 insertStatement.executeUpdate();
                 conn.commit();
                 return true;
@@ -324,7 +370,7 @@ public class ProductsManager extends Application {
 
         boolean updateProduct(Product product) {
             try {
-                updateStatement.setInt(1, product.getSalesCount());
+                updateStatement.setInt(1, product.getSoldCount());
                 updateStatement.setString(2, product.getName());
                 updateStatement.executeUpdate();
                 conn.commit();
@@ -356,8 +402,8 @@ public class ProductsManager extends Application {
     public static class Product {
 
         private String name;
-        private int shippingCount;
-        private int salesCount;
+        private int originalCount;
+        private int soldCount;
 
         public String getName() {
             return name;
@@ -367,20 +413,205 @@ public class ProductsManager extends Application {
             this.name = name;
         }
 
-        public int getShippingCount() {
-            return shippingCount;
+        public int getOriginalCount() {
+            return originalCount;
         }
 
-        public void setShippingCount(int shippingCount) {
-            this.shippingCount = shippingCount;
+        public void setOriginalCount(int originalCount) {
+            this.originalCount = originalCount;
         }
 
-        public int getSalesCount() {
-            return salesCount;
+        public int getSoldCount() {
+            return soldCount;
+        }
+        
+        @SuppressWarnings("unused")
+        public int getInStoreCount() {return originalCount - soldCount;}
+
+        public void setSoldCount(int soldCount) {
+            this.soldCount = soldCount;
+        }
+    }
+
+    static class EventManager {
+
+        Map<String, List<EventListener>> listeners = new HashMap<>();
+
+        EventManager(String... operations) {
+            for (String operation : operations) {
+                this.listeners.put(operation, new ArrayList<>());
+            }
         }
 
-        public void setSalesCount(int salesCount) {
-            this.salesCount = salesCount;
+        void subscribe(String eventType, EventListener listener) {
+            List<EventListener> users = listeners.get(eventType);
+            users.add(listener);
+        }
+
+
+        void notify(String eventType, EventObject event) {
+            List<EventListener> users = listeners.get(eventType);
+            for (EventListener listener : users) {
+                listener.update(event);
+            }
+        }
+    }
+
+    static class EventObject {
+
+        Product product;
+        String sortedBy = "Name";
+        Label statusLabel;
+
+        EventObject(Product product) {
+            this.product = product;
+        }
+
+        void setStatusLabel(Label statusLabel) {
+            this.statusLabel = statusLabel;
+        }
+
+    }
+
+    interface EventListener {
+        void update(EventObject event);
+    }
+
+    static class ProductAddedDatabaseListener implements EventListener {
+
+        ProductsDataController controller;
+
+        ProductAddedDatabaseListener(ProductsDataController controller) {
+            this.controller = controller;
+        }
+
+        @Override
+        public void update(EventObject event) {
+           boolean success = controller.addProduct(event.product);
+           if(success) {
+               event.statusLabel.setText("Successfully Added");
+           } else {
+               event.statusLabel.setText("Not Added");
+           }
+        }
+    }
+
+    static class ProductAddedUserViewListener implements EventListener {
+
+        ObservableList<Product> userViewProducts;
+        TableView<Product> userView;
+
+        ProductAddedUserViewListener(TableView<Product> userView,
+                                     ObservableList<Product> userViewProducts) {
+            this.userView = userView;
+            this.userViewProducts = userViewProducts;
+        }
+
+        @Override
+        public void update(EventObject event) {
+            this.userViewProducts.add(event.product);
+            this.userView.refresh();
+        }
+    }
+
+    static class ProductAddedExecutiveViewListener implements EventListener {
+
+        ObservableList<Product> executiveViewProducts;
+        TableView<Product> executiveView;
+
+        ProductAddedExecutiveViewListener(TableView<Product> executiveView,
+                                          ObservableList<Product> executiveViewProducts) {
+            this.executiveView = executiveView;
+            this.executiveViewProducts = executiveViewProducts;
+        }
+
+        @Override
+        public void update(EventObject event) {
+            this.executiveViewProducts.add(event.product);
+            this.executiveView.refresh();
+        }
+    }
+
+    static class ProductSoldDatabaseListener implements EventListener {
+
+        ProductsDataController controller;
+
+        ProductSoldDatabaseListener(ProductsDataController controller) {
+            this.controller = controller;
+        }
+
+        @Override
+        public void update(EventObject event) {
+            boolean success = controller.updateProduct(event.product);
+            if(success) {
+                event.statusLabel.setText("Successfully Bought");
+            } else {
+                event.statusLabel.setText("Not Bought");
+            }
+        }
+    }
+
+    static class ProductSoldUserViewListener implements EventListener {
+
+        ObservableList<Product> userViewProducts;
+        TableView<Product> userView;
+
+        ProductSoldUserViewListener(TableView<Product> userView,
+                                    ObservableList<Product> userViewProducts) {
+            this.userView = userView;
+            this.userViewProducts = userViewProducts;
+        }
+
+        @Override
+        public void update(EventObject event) {
+            for(Product prod: userViewProducts) {
+                if(prod.getName().equalsIgnoreCase(event.product.getName())) {
+                    prod.setSoldCount(event.product.getSoldCount());
+                }
+            }
+            userView.refresh();
+        }
+    }
+
+    static class ProductSoldExecutiveViewListener implements EventListener {
+
+        ObservableList<Product> executiveViewProducts;
+        TableView<Product> executiveView;
+
+        ProductSoldExecutiveViewListener(TableView<Product> executiveView,
+                                         ObservableList<Product> executiveViewProducts) {
+            this.executiveView = executiveView;
+            this.executiveViewProducts = executiveViewProducts;
+        }
+
+        @Override
+        public void update(EventObject event) {
+            for(Product prod: executiveViewProducts) {
+                if(prod.getName().equalsIgnoreCase(event.product.getName())) {
+                    prod.setSoldCount(event.product.getSoldCount());
+                }
+            }
+            executiveView.refresh();
+        }
+    }
+
+    static class ProductsSortedListener implements EventListener {
+
+        ObservableList<Product> userViewProducts;
+        TableView<Product> userView;
+
+        ProductsSortedListener(TableView<Product> userView,
+                               ObservableList<Product> userViewProducts) {
+            this.userView = userView;
+            this.userViewProducts = userViewProducts;
+        }
+
+        @Override
+        public void update(EventObject event) {
+            if(event.sortedBy.equalsIgnoreCase("Name")) {
+                userViewProducts.sort(Comparator.comparing(Product::getName));
+                userView.refresh();
+            }
         }
     }
 
